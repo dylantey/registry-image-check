@@ -4,6 +4,15 @@ import { checkManifest } from '../src/registry-client';
 
 vi.mock('https');
 
+function createMockRes(statusCode: number, headers: Record<string, string> = {}) {
+  return {
+    statusCode,
+    headers,
+    resume: vi.fn(),
+    on: vi.fn(),
+  };
+}
+
 describe('checkManifest', () => {
   it('returns exists=true and digest on HTTP 200', async () => {
     const mockReq = {
@@ -11,15 +20,8 @@ describe('checkManifest', () => {
       end: vi.fn(),
     };
 
-    const mockRes = {
-      statusCode: 200,
-      headers: {
-        'docker-content-digest': 'sha256:abcdef',
-      },
-    };
-
     vi.mocked(https.request).mockImplementation((_options, callback) => {
-      callback(mockRes as any);
+      callback(createMockRes(200, { 'docker-content-digest': 'sha256:abcdef' }) as any);
       return mockReq as any;
     });
 
@@ -34,13 +36,8 @@ describe('checkManifest', () => {
       end: vi.fn(),
     };
 
-    const mockRes = {
-      statusCode: 404,
-      headers: {},
-    };
-
     vi.mocked(https.request).mockImplementation((_options, callback) => {
-      callback(mockRes as any);
+      callback(createMockRes(404) as any);
       return mockReq as any;
     });
 
@@ -54,15 +51,10 @@ describe('checkManifest', () => {
       end: vi.fn(),
     };
 
-    const mockRes = {
-      statusCode: 200,
-      headers: {},
-    };
-
     let capturedOptions: any;
     vi.mocked(https.request).mockImplementation((options: any, callback) => {
       capturedOptions = options;
-      callback(mockRes as any);
+      callback(createMockRes(200) as any);
       return mockReq as any;
     });
 
@@ -76,15 +68,10 @@ describe('checkManifest', () => {
       end: vi.fn(),
     };
 
-    const mockRes = {
-      statusCode: 200,
-      headers: {},
-    };
-
     let capturedOptions: any;
     vi.mocked(https.request).mockImplementation((options: any, callback) => {
       capturedOptions = options;
-      callback(mockRes as any);
+      callback(createMockRes(200) as any);
       return mockReq as any;
     });
 
@@ -95,5 +82,51 @@ describe('checkManifest', () => {
     expect(capturedOptions.headers.Authorization).toBe(
       `Basic ${Buffer.from('user:pass').toString('base64')}`
     );
+  });
+
+  it('fetches bearer token on 401 and retries', async () => {
+    const mockReq = {
+      on: vi.fn(),
+      end: vi.fn(),
+    };
+
+    const calls: Array<{ options: any; response: any }> = [];
+    vi.mocked(https.request).mockImplementation((options: any, callback) => {
+      const isTokenRequest = options.path.includes('/token');
+      if (isTokenRequest) {
+        const tokenRes = {
+          statusCode: 200,
+          headers: {},
+          on: vi.fn((event: string, handler: (chunk: string) => void) => {
+            if (event === 'data') {
+              handler(JSON.stringify({ token: 'my-bearer-token' }));
+            }
+            if (event === 'end') {
+              handler();
+            }
+          }),
+          resume: vi.fn(),
+        };
+        calls.push({ options, response: tokenRes });
+        callback(tokenRes as any);
+      } else if (calls.length === 0) {
+        const challengeRes = createMockRes(401, {
+          'www-authenticate': 'Bearer realm="https://registry.io/token",service="registry.io",scope="repository:repo/image:pull"',
+        });
+        calls.push({ options, response: challengeRes });
+        callback(challengeRes as any);
+      } else {
+        const successRes = createMockRes(200, { 'docker-content-digest': 'sha256:123456' });
+        calls.push({ options, response: successRes });
+        callback(successRes as any);
+      }
+      return mockReq as any;
+    });
+
+    const result = await checkManifest('registry.io', 'repo/image', 'latest');
+    expect(result.exists).toBe(true);
+    expect(result.digest).toBe('sha256:123456');
+    expect(calls.length).toBe(3);
+    expect(calls[2].options.headers.Authorization).toBe('Bearer my-bearer-token');
   });
 });

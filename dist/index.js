@@ -26001,13 +26001,25 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.checkManifest = checkManifest;
 const https = __importStar(__nccwpck_require__(5692));
 const http = __importStar(__nccwpck_require__(8611));
+const url_1 = __nccwpck_require__(7016);
 async function checkManifest(registry, repository, reference, auth) {
     const encodedRepository = encodeURIComponent(repository).replace(/%2F/g, '/');
     const path = `/v2/${encodedRepository}/manifests/${encodeURIComponent(reference)}`;
-    const isHttps = !registry.startsWith('http://');
-    const hostname = registry.replace(/^https?:\/\//, '').replace(/:\d+$/, '');
-    const portMatch = registry.match(/:(\d+)$/);
-    const port = portMatch ? parseInt(portMatch[1], 10) : undefined;
+    const result = await request(registry, path, 'HEAD', buildHeaders(auth));
+    if (result.statusCode === 401 && result.headers['www-authenticate']) {
+        const bearerAuth = parseBearerChallenge(result.headers['www-authenticate']);
+        if (bearerAuth) {
+            const token = await fetchBearerToken(bearerAuth, auth);
+            const tokenResult = await request(registry, path, 'HEAD', {
+                ...buildHeaders(auth),
+                Authorization: `Bearer ${token}`,
+            });
+            return handleRegistryResponse(tokenResult, registry);
+        }
+    }
+    return handleRegistryResponse(result, registry);
+}
+function buildHeaders(auth) {
     const headers = {
         Accept: [
             'application/vnd.docker.distribution.manifest.v2+json',
@@ -26020,36 +26032,114 @@ async function checkManifest(registry, repository, reference, auth) {
     if (auth) {
         headers.Authorization = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`;
     }
+    return headers;
+}
+function handleRegistryResponse(result, registry) {
+    const digest = result.headers['docker-content-digest'];
+    if (result.statusCode === 200) {
+        return { exists: true, digest };
+    }
+    else if (result.statusCode === 404) {
+        return { exists: false };
+    }
+    else if (result.statusCode === 401) {
+        throw new Error(`Unauthorized (401) for ${registry}. Check your credentials.`);
+    }
+    else if (result.statusCode === 403) {
+        throw new Error(`Forbidden (403) for ${registry}. Check your permissions.`);
+    }
+    else {
+        throw new Error(`Unexpected status ${result.statusCode} from registry`);
+    }
+}
+function parseConnectionOptions(registry) {
+    const isHttps = !registry.startsWith('http://');
+    const hostname = registry.replace(/^https?:\/\//, '').replace(/:\d+$/, '');
+    const portMatch = registry.match(/:(\d+)$/);
+    const port = portMatch ? parseInt(portMatch[1], 10) : undefined;
+    return { isHttps, hostname, port };
+}
+function request(registry, path, method, headers, readBody = false) {
+    const { isHttps, hostname, port } = parseConnectionOptions(registry);
+    const client = isHttps ? https : http;
     const options = {
-        method: 'HEAD',
+        method,
         hostname,
         port,
         path,
         headers,
     };
-    const client = isHttps ? https : http;
     return new Promise((resolve, reject) => {
         const req = client.request(options, (res) => {
-            const digest = res.headers['docker-content-digest'];
-            if (res.statusCode === 200) {
-                resolve({ exists: true, digest });
+            if (!readBody) {
+                res.resume();
+                resolve({ statusCode: res.statusCode || 0, headers: res.headers });
+                return;
             }
-            else if (res.statusCode === 404) {
-                resolve({ exists: false });
-            }
-            else if (res.statusCode === 401) {
-                reject(new Error(`Unauthorized (401) for ${registry}. Check your credentials.`));
-            }
-            else if (res.statusCode === 403) {
-                reject(new Error(`Forbidden (403) for ${registry}. Check your permissions.`));
-            }
-            else {
-                reject(new Error(`Unexpected status ${res.statusCode} from registry`));
-            }
+            let data = '';
+            res.on('data', (chunk) => {
+                data += chunk;
+            });
+            res.on('end', () => {
+                resolve({ statusCode: res.statusCode || 0, headers: res.headers, body: data });
+            });
         });
         req.on('error', reject);
         req.end();
     });
+}
+function parseBearerChallenge(header) {
+    if (!header.toLowerCase().startsWith('bearer ')) {
+        return null;
+    }
+    const params = header.substring(7).trim();
+    const result = { realm: '' };
+    for (const part of params.split(',')) {
+        const [key, ...valueParts] = part.split('=');
+        const value = valueParts.join('=').replace(/^"/, '').replace(/"$/, '');
+        if (key.trim() === 'realm')
+            result.realm = value;
+        if (key.trim() === 'service')
+            result.service = value;
+        if (key.trim() === 'scope')
+            result.scope = value;
+    }
+    if (!result.realm)
+        return null;
+    return result;
+}
+async function fetchBearerToken(challenge, auth) {
+    const url = new url_1.URL(challenge.realm);
+    if (challenge.service)
+        url.searchParams.set('service', challenge.service);
+    if (challenge.scope)
+        url.searchParams.set('scope', challenge.scope);
+    const headers = {
+        'User-Agent': 'registry-image-check',
+    };
+    if (auth) {
+        headers.Authorization = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`;
+    }
+    const response = await request(url.origin, `${url.pathname}${url.search}`, 'GET', headers, true);
+    if (response.statusCode !== 200) {
+        throw new Error(`Failed to fetch registry token: status ${response.statusCode}`);
+    }
+    try {
+        const parsed = JSON.parse(response.body || '{}');
+        if (parsed.token) {
+            return parsed.token;
+        }
+        if (parsed.access_token) {
+            return parsed.access_token;
+        }
+        throw new Error('Registry token response did not contain a token');
+    }
+    catch (err) {
+        if (err instanceof Error && err.message.includes('token response')) {
+            throw err;
+        }
+        throw new Error(`Failed to parse registry token response: ${err instanceof Error ? err.message : String(err)}`);
+    }
 }
 
 
