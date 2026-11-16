@@ -1,12 +1,10 @@
 import * as exec from '@actions/exec';
 import { DockerAuth, DockerConfig, getAuthFromAuths, readDockerConfig } from './docker-config';
 
-export async function getCredentials(registry: string): Promise<DockerAuth> {
+export async function getCredentials(registry: string): Promise<DockerAuth | undefined> {
   const config = readDockerConfig();
   if (!config) {
-    throw new Error(
-      'No Docker config found. Make sure you log in to the registry first.'
-    );
+    return undefined;
   }
 
   // 1. Try direct auths entry
@@ -24,9 +22,8 @@ export async function getCredentials(registry: string): Promise<DockerAuth> {
     return getCredentialsFromHelper(config.credsStore, registry);
   }
 
-  throw new Error(
-    `No credentials found for registry ${registry}. Make sure you log in first.`
-  );
+  // Public registries may not require credentials
+  return undefined;
 }
 
 async function getCredentialsFromHelper(helper: string, registry: string): Promise<DockerAuth> {

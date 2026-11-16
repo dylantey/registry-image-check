@@ -11,7 +11,7 @@ export async function checkManifest(
   registry: string,
   repository: string,
   reference: string,
-  auth: DockerAuth
+  auth?: DockerAuth
 ): Promise<CheckResult> {
   const encodedRepository = encodeURIComponent(repository).replace(/%2F/g, '/');
   const path = `/v2/${encodedRepository}/manifests/${encodeURIComponent(reference)}`;
@@ -21,21 +21,26 @@ export async function checkManifest(
   const portMatch = registry.match(/:(\d+)$/);
   const port = portMatch ? parseInt(portMatch[1], 10) : undefined;
 
+  const headers: Record<string, string> = {
+    Accept: [
+      'application/vnd.docker.distribution.manifest.v2+json',
+      'application/vnd.docker.distribution.manifest.list.v2+json',
+      'application/vnd.oci.image.manifest.v1+json',
+      'application/vnd.oci.image.index.v1+json',
+    ].join(', '),
+    'User-Agent': 'registry-image-check',
+  };
+
+  if (auth) {
+    headers.Authorization = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`;
+  }
+
   const options: https.RequestOptions = {
     method: 'HEAD',
     hostname,
     port,
     path,
-    headers: {
-      Accept: [
-        'application/vnd.docker.distribution.manifest.v2+json',
-        'application/vnd.docker.distribution.manifest.list.v2+json',
-        'application/vnd.oci.image.manifest.v1+json',
-        'application/vnd.oci.image.index.v1+json',
-      ].join(', '),
-      Authorization: `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`,
-      'User-Agent': 'registry-image-check',
-    },
+    headers,
   };
 
   const client = isHttps ? https : http;

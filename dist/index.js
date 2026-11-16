@@ -25688,7 +25688,7 @@ const docker_config_1 = __nccwpck_require__(7706);
 async function getCredentials(registry) {
     const config = (0, docker_config_1.readDockerConfig)();
     if (!config) {
-        throw new Error('No Docker config found. Make sure you log in to the registry first.');
+        return undefined;
     }
     // 1. Try direct auths entry
     const auth = (0, docker_config_1.getAuthFromAuths)(config, registry);
@@ -25703,7 +25703,8 @@ async function getCredentials(registry) {
     if (config.credsStore) {
         return getCredentialsFromHelper(config.credsStore, registry);
     }
-    throw new Error(`No credentials found for registry ${registry}. Make sure you log in first.`);
+    // Public registries may not require credentials
+    return undefined;
 }
 async function getCredentialsFromHelper(helper, registry) {
     const helperName = `docker-credential-${helper}`;
@@ -26007,21 +26008,24 @@ async function checkManifest(registry, repository, reference, auth) {
     const hostname = registry.replace(/^https?:\/\//, '').replace(/:\d+$/, '');
     const portMatch = registry.match(/:(\d+)$/);
     const port = portMatch ? parseInt(portMatch[1], 10) : undefined;
+    const headers = {
+        Accept: [
+            'application/vnd.docker.distribution.manifest.v2+json',
+            'application/vnd.docker.distribution.manifest.list.v2+json',
+            'application/vnd.oci.image.manifest.v1+json',
+            'application/vnd.oci.image.index.v1+json',
+        ].join(', '),
+        'User-Agent': 'registry-image-check',
+    };
+    if (auth) {
+        headers.Authorization = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`;
+    }
     const options = {
         method: 'HEAD',
         hostname,
         port,
         path,
-        headers: {
-            Accept: [
-                'application/vnd.docker.distribution.manifest.v2+json',
-                'application/vnd.docker.distribution.manifest.list.v2+json',
-                'application/vnd.oci.image.manifest.v1+json',
-                'application/vnd.oci.image.index.v1+json',
-            ].join(', '),
-            Authorization: `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`,
-            'User-Agent': 'registry-image-check',
-        },
+        headers,
     };
     const client = isHttps ? https : http;
     return new Promise((resolve, reject) => {
