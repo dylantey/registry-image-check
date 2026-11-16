@@ -1,0 +1,19 @@
+name: 'Registry Image Check'
+description: 'Check if a container image exists in a registry without using the Docker daemon.'
+author: 'your-org'
+inputs:
+  image:
+    description: 'Full image reference, e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-repo:tag'
+    required: true
+  fail-on-error:
+    description: 'Fail the step if the registry request fails for non-404 reasons'
+    required: false
+    default: 'true'
+outputs:
+  exists:
+    description: 'true if the image exists, false otherwise'
+  digest:
+    description: 'The manifest digest, if the image exists'
+runs:
+  using: 'node24'
+  main: 'dist/index.js'

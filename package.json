@@ -1,0 +1,21 @@
+{
+  "name": "registry-image-check",
+  "version": "1.0.0",
+  "description": "Check if a container image exists in a registry without the Docker daemon",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "bundle": "ncc build src/index.ts -o dist --license licenses.txt",
+    "test": "vitest"
+  },
+  "dependencies": {
+    "@actions/core": "^1.11.1",
+    "@actions/exec": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "@vercel/ncc": "^0.38.3",
+    "typescript": "^5.7.3",
+    "vitest": "^3.0.5"
+  }
+}
