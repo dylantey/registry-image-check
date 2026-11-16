@@ -1,8 +1,16 @@
 {
   "name": "registry-image-check",
-  "version": "1.0.0",
+  "version": "0.0.0-development",
   "description": "Check if a container image exists in a registry without the Docker daemon",
   "main": "dist/index.js",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/dylantey/registry-image-check.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dylantey/registry-image-check/issues"
+  },
+  "homepage": "https://github.com/dylantey/registry-image-check#readme",
   "scripts": {
     "build": "tsc",
     "bundle": "ncc build src/index.ts -o dist --license licenses.txt",
@@ -13,8 +21,12 @@
     "@actions/exec": "^1.1.1"
   },
   "devDependencies": {
+    "@semantic-release/changelog": "^6.0.3",
+    "@semantic-release/exec": "^6.0.3",
+    "@semantic-release/git": "^10.0.1",
     "@types/node": "^22.13.1",
     "@vercel/ncc": "^0.38.3",
+    "semantic-release": "^24.0.0",
     "typescript": "^5.7.3",
     "vitest": "^3.0.5"
   }
