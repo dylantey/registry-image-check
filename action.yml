@@ -9,6 +9,10 @@ inputs:
     description: 'Fail the step if the registry request fails for non-404 reasons'
     required: false
     default: 'true'
+  fail-if-missing:
+    description: 'Fail the step if the image does not exist (404)'
+    required: false
+    default: 'false'
 outputs:
   exists:
     description: 'true if the image exists, false otherwise'

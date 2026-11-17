@@ -73,10 +73,11 @@ Log in to your registry first, then use this action.
 
 ## Inputs
 
-| Name            | Required | Default | Description                                                |
-| --------------- | -------- | ------- | ---------------------------------------------------------- |
-| `image`         | yes      |         | Full image reference, including registry and tag or digest |
-| `fail-on-error` | no       | `true`  | Fail the step on registry errors other than 404            |
+| Name              | Required | Default | Description                                                |
+| ----------------- | -------- | ------- | ---------------------------------------------------------- |
+| `image`           | yes      |         | Full image reference, including registry and tag or digest |
+| `fail-on-error`   | no       | `true`  | Fail the step on registry errors other than 404            |
+| `fail-if-missing` | no       | `false` | Fail the step if the image does not exist (404)            |
 
 ## Outputs
 

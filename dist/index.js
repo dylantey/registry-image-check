@@ -25919,6 +25919,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.run = run;
 const core = __importStar(__nccwpck_require__(7484));
 const image_parser_1 = __nccwpck_require__(1568);
 const credentials_1 = __nccwpck_require__(3029);
@@ -25926,6 +25927,7 @@ const registry_client_1 = __nccwpck_require__(9122);
 async function run() {
     const image = core.getInput('image', { required: true });
     const failOnError = core.getBooleanInput('fail-on-error');
+    const failIfMissing = core.getBooleanInput('fail-if-missing');
     try {
         const ref = (0, image_parser_1.parseImageReference)(image);
         core.info(`Checking ${ref.registry}/${ref.repository}...`);
@@ -25943,6 +25945,9 @@ async function run() {
         if (result.digest) {
             core.info(`Digest: ${result.digest}`);
         }
+        if (!result.exists && failIfMissing) {
+            core.setFailed(`Image not found: ${image}`);
+        }
     }
     catch (error) {
         if (failOnError) {
@@ -25954,7 +25959,9 @@ async function run() {
         }
     }
 }
-run();
+if (!process.env.VITEST) {
+    run();
+}
 
 
 /***/ }),
