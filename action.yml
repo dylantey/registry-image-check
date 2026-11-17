@@ -12,7 +12,7 @@ inputs:
   fail-if-missing:
     description: 'Fail the step if the image does not exist (404)'
     required: false
-    default: 'false'
+    default: 'true'
 outputs:
   exists:
     description: 'true if the image exists, false otherwise'

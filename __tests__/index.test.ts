@@ -32,7 +32,7 @@ describe('run', () => {
     });
     mockedCore.getBooleanInput.mockImplementation((name: string) => {
       if (name === 'fail-on-error') return true;
-      if (name === 'fail-if-missing') return false;
+      if (name === 'fail-if-missing') return true;
       return false;
     });
   });
@@ -48,6 +48,11 @@ describe('run', () => {
   });
 
   it('sets exists=false and does not fail when image is missing and fail-if-missing is false', async () => {
+    mockedCore.getBooleanInput.mockImplementation((name: string) => {
+      if (name === 'fail-on-error') return true;
+      if (name === 'fail-if-missing') return false;
+      return false;
+    });
     mockedCheckManifest.mockResolvedValue({ exists: false });
 
     await run();
