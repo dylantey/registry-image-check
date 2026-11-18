@@ -3,9 +3,10 @@ import { parseImageReference } from './image-parser';
 import { getCredentials } from './credentials';
 import { checkManifest } from './registry-client';
 
-async function run(): Promise<void> {
+export async function run(): Promise<void> {
   const image = core.getInput('image', { required: true });
   const failOnError = core.getBooleanInput('fail-on-error');
+  const failIfMissing = core.getBooleanInput('fail-if-missing');
 
   try {
     const ref = parseImageReference(image);
@@ -29,6 +30,10 @@ async function run(): Promise<void> {
     if (result.digest) {
       core.info(`Digest: ${result.digest}`);
     }
+
+    if (!result.exists && failIfMissing) {
+      core.setFailed(`Image not found: ${image}`);
+    }
   } catch (error) {
     if (failOnError) {
       core.setFailed(error instanceof Error ? error.message : String(error));
@@ -39,4 +44,6 @@ async function run(): Promise<void> {
   }
 }
 
-run();
+if (!process.env.VITEST) {
+  run();
+}
