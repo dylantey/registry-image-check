@@ -28,7 +28,7 @@ Log in to your registry first, then use this action.
 
 - uses: aws-actions/amazon-ecr-login@v2
 
-- uses: dylantey/registry-image-check@v1
+- uses: dylantey/registry-image-check@v0
   id: check
   with:
     image: 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-repo:${{ github.sha }}
@@ -45,7 +45,7 @@ Log in to your registry first, then use this action.
     username: ${{ secrets.AZURE_CLIENT_ID }}
     password: ${{ secrets.AZURE_CLIENT_SECRET }}
 
-- uses: dylantey/registry-image-check@v1
+- uses: dylantey/registry-image-check@v0
   with:
     image: myregistry.azurecr.io/my-repo:${{ github.sha }}
 ```
@@ -66,7 +66,7 @@ Log in to your registry first, then use this action.
     username: oauth2accesstoken
     password: ${{ steps.auth.outputs.access_token }}
 
-- uses: dylantey/registry-image-check@v1
+- uses: dylantey/registry-image-check@v0
   with:
     image: us-docker.pkg.dev/my-project/my-repo/my-image:${{ github.sha }}
 ```
@@ -76,7 +76,7 @@ Log in to your registry first, then use this action.
 Set `fail-on-missing: false` so a missing image doesn't fail the step, then gate the build on `exists`:
 
 ```yaml
-- uses: dylantey/registry-image-check@v1
+- uses: dylantey/registry-image-check@v0
   id: check
   with:
     image: ghcr.io/my-org/my-app:${{ github.sha }}
