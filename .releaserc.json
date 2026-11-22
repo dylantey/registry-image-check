@@ -7,7 +7,7 @@
     [
       "@semantic-release/exec",
       {
-        "successCmd": "git config user.name 'github-actions' && git config user.email 'github-actions@github.com' && git tag -fa v${nextRelease.major} v${nextRelease.version} -m 'Update v${nextRelease.major} tag' && git push origin v${nextRelease.major} --force"
+        "successCmd": "git config user.name 'github-actions' && git config user.email 'github-actions@github.com' && git tag -fa v${nextRelease.version.split('.')[0]} v${nextRelease.version} -m 'Update v${nextRelease.version.split('.')[0]} tag' && git push origin v${nextRelease.version.split('.')[0]} --force"
       }
     ]
   ]
