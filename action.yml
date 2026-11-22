@@ -15,9 +15,11 @@ inputs:
     default: 'true'
 outputs:
   exists:
-    description: 'true if the image exists, false otherwise'
+    description: 'true if the image exists, false if the registry reports it missing, empty if the check failed (when fail-on-error is false)'
   digest:
     description: 'The manifest digest, if the image exists'
+  error:
+    description: 'Error message if the check failed'
 runs:
   using: 'node24'
   main: 'dist/index.js'

@@ -37,6 +37,20 @@ describe('getCredentials', () => {
     expect(auth).toEqual({ username: 'user', password: 'pass' });
   });
 
+  it('finds Docker Hub credentials stored under the legacy index URL', async () => {
+    const config = {
+      auths: {
+        'https://index.docker.io/v1/': {
+          auth: Buffer.from('user:pass').toString('base64'),
+        },
+      },
+    };
+    fs.writeFileSync(path.join(tempDir, 'config.json'), JSON.stringify(config));
+
+    const auth = await getCredentials('docker.io');
+    expect(auth).toEqual({ username: 'user', password: 'pass' });
+  });
+
   it('returns undefined when no docker config exists', async () => {
     const auth = await getCredentials('public.ecr.aws');
     expect(auth).toBeUndefined();

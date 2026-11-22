@@ -40,7 +40,9 @@ function getDockerConfigPath(): string {
 export function getAuthFromAuths(config: DockerConfig, registry: string): DockerAuth | null {
   if (!config.auths) return null;
 
-  const candidates = [registry, `https://${registry}`, `http://${registry}`];
+  // `docker login` stores Docker Hub credentials under the legacy index URL, not "docker.io".
+  const aliases = registry === 'docker.io' ? ['https://index.docker.io/v1/', 'index.docker.io'] : [];
+  const candidates = [registry, `https://${registry}`, `http://${registry}`, ...aliases];
 
   for (const key of candidates) {
     const entry = config.auths[key];

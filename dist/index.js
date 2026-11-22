@@ -25790,7 +25790,9 @@ function getDockerConfigPath() {
 function getAuthFromAuths(config, registry) {
     if (!config.auths)
         return null;
-    const candidates = [registry, `https://${registry}`, `http://${registry}`];
+    // `docker login` stores Docker Hub credentials under the legacy index URL, not "docker.io".
+    const aliases = registry === 'docker.io' ? ['https://index.docker.io/v1/', 'index.docker.io'] : [];
+    const candidates = [registry, `https://${registry}`, `http://${registry}`, ...aliases];
     for (const key of candidates) {
         const entry = config.auths[key];
         if (!entry)
@@ -25950,12 +25952,15 @@ async function run() {
         }
     }
     catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        core.setOutput('error', message);
         if (failOnError) {
-            core.setFailed(error instanceof Error ? error.message : String(error));
+            core.setFailed(message);
         }
         else {
-            core.setOutput('exists', 'false');
-            core.warning(error instanceof Error ? error.message : String(error));
+            // Empty means "unknown": a registry error must not look like a missing image.
+            core.setOutput('exists', '');
+            core.warning(message);
         }
     }
 }
@@ -26005,22 +26010,34 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
+exports.resolveApiHost = resolveApiHost;
 exports.checkManifest = checkManifest;
 const https = __importStar(__nccwpck_require__(5692));
 const http = __importStar(__nccwpck_require__(8611));
 const url_1 = __nccwpck_require__(7016);
-async function checkManifest(registry, repository, reference, auth) {
+const MAX_ATTEMPTS = 3;
+const REQUEST_TIMEOUT_MS = 10_000;
+const BASE_BACKOFF_MS = 1_000;
+const MAX_RETRY_AFTER_MS = 30_000;
+const defaultSleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** Docker Hub's API lives on registry-1.docker.io; "docker.io" is only the display name. */
+function resolveApiHost(registry) {
+    return registry === 'docker.io' ? 'registry-1.docker.io' : registry;
+}
+async function checkManifest(registry, repository, reference, auth, options = {}) {
+    const sleep = options.sleep ?? defaultSleep;
+    const apiHost = resolveApiHost(registry);
     const encodedRepository = encodeURIComponent(repository).replace(/%2F/g, '/');
     const path = `/v2/${encodedRepository}/manifests/${encodeURIComponent(reference)}`;
-    const result = await request(registry, path, 'HEAD', buildHeaders(auth));
+    const result = await requestWithRetry(apiHost, path, 'HEAD', buildHeaders(auth), sleep);
     if (result.statusCode === 401 && result.headers['www-authenticate']) {
         const bearerAuth = parseBearerChallenge(result.headers['www-authenticate']);
         if (bearerAuth) {
-            const token = await fetchBearerToken(bearerAuth, auth);
-            const tokenResult = await request(registry, path, 'HEAD', {
+            const token = await fetchBearerToken(bearerAuth, auth, sleep);
+            const tokenResult = await requestWithRetry(apiHost, path, 'HEAD', {
                 ...buildHeaders(auth),
                 Authorization: `Bearer ${token}`,
-            });
+            }, sleep);
             return handleRegistryResponse(tokenResult, registry);
         }
     }
@@ -26055,9 +26072,54 @@ function handleRegistryResponse(result, registry) {
     else if (result.statusCode === 403) {
         throw new Error(`Forbidden (403) for ${registry}. Check your permissions.`);
     }
+    else if (result.statusCode === 429) {
+        throw new Error(`Rate limited (429) by ${registry}. Run \`docker login\` or provide registry credentials to raise the limit.`);
+    }
     else {
         throw new Error(`Unexpected status ${result.statusCode} from registry`);
     }
+}
+function isRetryableStatus(statusCode) {
+    return statusCode === 429 || statusCode >= 500;
+}
+/** Retry-After in seconds form only; returns undefined if absent or unparseable. */
+function retryAfterMs(headers) {
+    const value = headers['retry-after'];
+    if (typeof value !== 'string')
+        return undefined;
+    const seconds = Number(value);
+    if (!Number.isFinite(seconds) || seconds < 0)
+        return undefined;
+    return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
+}
+/**
+ * Performs a request with up to MAX_ATTEMPTS tries. Retries on network errors,
+ * timeouts, 5xx and 429. Other statuses are returned to the caller unchanged.
+ * The final attempt's result (or error) is returned/thrown as-is.
+ */
+async function requestWithRetry(hostname, path, method, headers, sleep, readBody = false) {
+    let lastError;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+        const backoff = BASE_BACKOFF_MS * 2 ** (attempt - 1);
+        const isLastAttempt = attempt === MAX_ATTEMPTS;
+        let result;
+        try {
+            result = await request(hostname, path, method, headers, readBody);
+        }
+        catch (err) {
+            lastError = err;
+            if (isLastAttempt)
+                throw err;
+            await sleep(backoff);
+            continue;
+        }
+        if (!isRetryableStatus(result.statusCode) || isLastAttempt) {
+            return result;
+        }
+        const delay = result.statusCode === 429 ? retryAfterMs(result.headers) ?? backoff : backoff;
+        await sleep(delay);
+    }
+    throw lastError ?? new Error('Request failed');
 }
 function parseConnectionOptions(registry) {
     const isHttps = !registry.startsWith('http://');
@@ -26091,6 +26153,9 @@ function request(registry, path, method, headers, readBody = false) {
                 resolve({ statusCode: res.statusCode || 0, headers: res.headers, body: data });
             });
         });
+        req.setTimeout(REQUEST_TIMEOUT_MS, () => {
+            req.destroy(new Error(`Request to ${registry} timed out after ${REQUEST_TIMEOUT_MS}ms`));
+        });
         req.on('error', reject);
         req.end();
     });
@@ -26115,7 +26180,7 @@ function parseBearerChallenge(header) {
         return null;
     return result;
 }
-async function fetchBearerToken(challenge, auth) {
+async function fetchBearerToken(challenge, auth, sleep) {
     const url = new url_1.URL(challenge.realm);
     if (challenge.service)
         url.searchParams.set('service', challenge.service);
@@ -26127,7 +26192,7 @@ async function fetchBearerToken(challenge, auth) {
     if (auth) {
         headers.Authorization = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`;
     }
-    const response = await request(url.origin, `${url.pathname}${url.search}`, 'GET', headers, true);
+    const response = await requestWithRetry(url.origin, `${url.pathname}${url.search}`, 'GET', headers, sleep, true);
     if (response.statusCode !== 200) {
         throw new Error(`Failed to fetch registry token: status ${response.statusCode}`);
     }

@@ -35,11 +35,14 @@ export async function run(): Promise<void> {
       core.setFailed(`Image not found: ${image}`);
     }
   } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    core.setOutput('error', message);
     if (failOnError) {
-      core.setFailed(error instanceof Error ? error.message : String(error));
+      core.setFailed(message);
     } else {
-      core.setOutput('exists', 'false');
-      core.warning(error instanceof Error ? error.message : String(error));
+      // Empty means "unknown": a registry error must not look like a missing image.
+      core.setOutput('exists', '');
+      core.warning(message);
     }
   }
 }

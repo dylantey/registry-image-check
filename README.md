@@ -81,10 +81,13 @@ Log in to your registry first, then use this action.
 
 ## Outputs
 
-| Name     | Description                                |
-| -------- | ------------------------------------------ |
-| `exists` | `true` if the image exists, `false` if not |
-| `digest` | Manifest digest, if the image exists       |
+| Name     | Description                                                                                                  |
+| -------- | ------------------------------------------------------------------------------------------------------------ |
+| `exists` | `true` if the image exists, `false` if the registry reports it missing, empty if the check failed (see below) |
+| `digest` | Manifest digest, if the image exists                                                                         |
+| `error`  | Error message if the check failed                                                                            |
+
+When `fail-on-error` is `false`, a failed check leaves `exists` empty rather than `false`, so a registry outage or rate limit is never mistaken for a missing image. Check `exists` for `'true'`/`'false'` before building.
 
 ## How it works
 
@@ -92,6 +95,11 @@ Log in to your registry first, then use this action.
 2. Supports direct `auths` entries and `credHelpers` / `credsStore`.
 3. Sends a `HEAD` request to `/v2/<repository>/manifests/<tag-or-digest>`.
 4. Returns `exists=true` on HTTP 200 and `exists=false` on HTTP 404.
+5. Retries up to 3 attempts on network errors, timeouts (10s), 5xx and 429, with backoff. A 429 `Retry-After` is honored up to 30s.
+
+Unqualified image names such as `ubuntu:22.04` default to Docker Hub (`docker.io/library/ubuntu:22.04`), using `registry-1.docker.io` for API requests.
+
+Anonymous pulls from Docker Hub are rate limited. If you see a 429 error, run `docker login` before the check, or pass registry credentials.
 
 ## Development
 

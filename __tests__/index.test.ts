@@ -76,4 +76,29 @@ describe('run', () => {
       'Image not found: registry.io/repo/image:latest'
     );
   });
+
+  it('leaves exists empty and sets error when the check fails and fail-on-error is false', async () => {
+    mockedCore.getBooleanInput.mockImplementation((name: string) => {
+      if (name === 'fail-on-error') return false;
+      if (name === 'fail-if-missing') return true;
+      return false;
+    });
+    mockedCheckManifest.mockRejectedValue(new Error('Rate limited (429) by registry.io.'));
+
+    await run();
+
+    expect(mockedCore.setOutput).toHaveBeenCalledWith('exists', '');
+    expect(mockedCore.setOutput).toHaveBeenCalledWith('error', 'Rate limited (429) by registry.io.');
+    expect(mockedCore.setOutput).not.toHaveBeenCalledWith('exists', 'false');
+    expect(mockedCore.setFailed).not.toHaveBeenCalled();
+  });
+
+  it('sets error and fails the step when the check fails and fail-on-error is true', async () => {
+    mockedCheckManifest.mockRejectedValue(new Error('Forbidden (403) for registry.io.'));
+
+    await run();
+
+    expect(mockedCore.setOutput).toHaveBeenCalledWith('error', 'Forbidden (403) for registry.io.');
+    expect(mockedCore.setFailed).toHaveBeenCalledWith('Forbidden (403) for registry.io.');
+  });
 });
