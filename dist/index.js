@@ -25927,16 +25927,19 @@ const image_parser_1 = __nccwpck_require__(1568);
 const credentials_1 = __nccwpck_require__(3029);
 const registry_client_1 = __nccwpck_require__(9122);
 async function run() {
-    const image = core.getInput('image', { required: true });
-    let failOnError;
-    let failIfMissing;
+    // Input errors are configuration bugs, so they always fail the step,
+    // regardless of fail-on-unknown.
+    let image;
+    let failOnUnknown;
+    let failOnMissing;
     try {
-        failOnError = core.getBooleanInput('fail-on-error');
-        failIfMissing = core.getBooleanInput('fail-if-missing');
+        image = core.getInput('image', { required: true });
+        failOnUnknown = core.getBooleanInput('fail-on-unknown');
+        failOnMissing = core.getBooleanInput('fail-on-missing');
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        core.setFailed(`Invalid boolean input: ${message}`);
+        core.setFailed(`Invalid input: ${message}`);
         return;
     }
     try {
@@ -25956,14 +25959,14 @@ async function run() {
         if (result.digest) {
             core.info(`Digest: ${result.digest}`);
         }
-        if (!result.exists && failIfMissing) {
+        if (!result.exists && failOnMissing) {
             core.setFailed(`Image not found: ${image}`);
         }
     }
     catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         core.setOutput('error', message);
-        if (failOnError) {
+        if (failOnUnknown) {
             core.setFailed(message);
         }
         else {
@@ -25974,7 +25977,7 @@ async function run() {
     }
 }
 if (!process.env.VITEST) {
-    run();
+    run().catch((error) => core.setFailed(error instanceof Error ? error.message : String(error)));
 }
 
 

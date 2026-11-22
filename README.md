@@ -73,14 +73,14 @@ Log in to your registry first, then use this action.
 
 ### Build only when the image is missing
 
-Set `fail-if-missing: false` so a missing image doesn't fail the step, then gate the build on `exists`:
+Set `fail-on-missing: false` so a missing image doesn't fail the step, then gate the build on `exists`:
 
 ```yaml
 - uses: dylantey/registry-image-check@v1
   id: check
   with:
     image: ghcr.io/my-org/my-app:${{ github.sha }}
-    fail-if-missing: false
+    fail-on-missing: false
 
 # Compare with 'false' rather than '!= true': if the check itself failed,
 # exists is empty and the build should not run.
@@ -97,8 +97,8 @@ Set `fail-if-missing: false` so a missing image doesn't fail the step, then gate
 | Name              | Required | Default | Description                                                |
 | ----------------- | -------- | ------- | ---------------------------------------------------------- |
 | `image`           | yes      |         | Full image reference, including registry and tag or digest |
-| `fail-on-error`   | no       | `true`  | Fail the step on registry errors other than 404            |
-| `fail-if-missing` | no       | `true`  | Fail the step if the image does not exist (404)            |
+| `fail-on-unknown` | no       | `true`  | Fail the step if the check cannot complete (registry, auth, network or parse error) |
+| `fail-on-missing` | no       | `true`  | Fail the step if the image does not exist (404)            |
 
 ## Outputs
 
@@ -108,7 +108,7 @@ Set `fail-if-missing: false` so a missing image doesn't fail the step, then gate
 | `digest` | Manifest digest, if the image exists                                                                         |
 | `error`  | Error message if the check failed                                                                            |
 
-When `fail-on-error` is `false`, a failed check leaves `exists` empty rather than `false`, so a registry outage or rate limit is never mistaken for a missing image. Check `exists` for `'true'`/`'false'` before building.
+When `fail-on-unknown` is `false`, a failed check leaves `exists` empty rather than `false`, so a registry outage or rate limit is never mistaken for a missing image. Check `exists` for `'true'`/`'false'` before building.
 
 ## How it works
 

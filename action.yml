@@ -5,17 +5,17 @@ inputs:
   image:
     description: 'Full image reference, e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-repo:tag'
     required: true
-  fail-on-error:
-    description: 'Fail the step if the registry request fails for non-404 reasons'
+  fail-on-unknown:
+    description: 'Fail the step if the check cannot complete (registry, auth or network error, or invalid reference). If false, exists is empty and a warning is logged.'
     required: false
     default: 'true'
-  fail-if-missing:
+  fail-on-missing:
     description: 'Fail the step if the image does not exist (404)'
     required: false
     default: 'true'
 outputs:
   exists:
-    description: 'true if the image exists, false if the registry reports it missing, empty if the check failed (when fail-on-error is false)'
+    description: 'true if the image exists, false if the registry reports it missing, empty if the check failed (when fail-on-unknown is false)'
   digest:
     description: 'The manifest digest, if the image exists'
   error:
