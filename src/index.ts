@@ -5,8 +5,17 @@ import { checkManifest } from './registry-client';
 
 export async function run(): Promise<void> {
   const image = core.getInput('image', { required: true });
-  const failOnError = core.getBooleanInput('fail-on-error');
-  const failIfMissing = core.getBooleanInput('fail-if-missing');
+
+  let failOnError: boolean;
+  let failIfMissing: boolean;
+  try {
+    failOnError = core.getBooleanInput('fail-on-error');
+    failIfMissing = core.getBooleanInput('fail-if-missing');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    core.setFailed(`Invalid boolean input: ${message}`);
+    return;
+  }
 
   try {
     const ref = parseImageReference(image);

@@ -18,10 +18,19 @@ jobs:
 
       - run: npm ci
 
+      - name: Type check
+        run: npm run build
+
       - run: npm run test
 
       - run: npm run bundle
 
       - name: Ensure dist is up to date
         run: |
-          git diff --exit-code dist/ || (echo "dist/ is out of date. Run 'npm run bundle' and commit the result." && exit 1)
+          # --porcelain also reports untracked files, which `git diff` would miss
+          changes=$(git status --porcelain dist/)
+          if [ -n "$changes" ]; then
+            echo "$changes"
+            echo "dist/ is out of date. Run 'npm run bundle' and commit the result."
+            exit 1
+          fi

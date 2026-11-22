@@ -71,6 +71,27 @@ Log in to your registry first, then use this action.
     image: us-docker.pkg.dev/my-project/my-repo/my-image:${{ github.sha }}
 ```
 
+### Build only when the image is missing
+
+Set `fail-if-missing: false` so a missing image doesn't fail the step, then gate the build on `exists`:
+
+```yaml
+- uses: dylantey/registry-image-check@v1
+  id: check
+  with:
+    image: ghcr.io/my-org/my-app:${{ github.sha }}
+    fail-if-missing: false
+
+# Compare with 'false' rather than '!= true': if the check itself failed,
+# exists is empty and the build should not run.
+- name: Build and push
+  if: steps.check.outputs.exists == 'false'
+  # Assumes a prior step has logged in to ghcr.io (e.g. docker/login-action)
+  run: |
+    docker build -t ghcr.io/my-org/my-app:${{ github.sha }} .
+    docker push ghcr.io/my-org/my-app:${{ github.sha }}
+```
+
 ## Inputs
 
 | Name              | Required | Default | Description                                                |

@@ -93,6 +93,19 @@ describe('run', () => {
     expect(mockedCore.setFailed).not.toHaveBeenCalled();
   });
 
+  it('fails with a clear message when a boolean input is invalid', async () => {
+    mockedCore.getBooleanInput.mockImplementation(() => {
+      throw new TypeError('Input does not meet YAML 1.2 Core Schema specification: fail-if-missing');
+    });
+
+    await run();
+
+    expect(mockedCheckManifest).not.toHaveBeenCalled();
+    expect(mockedCore.setFailed).toHaveBeenCalledWith(
+      expect.stringMatching(/^Invalid boolean input: .*fail-if-missing/)
+    );
+  });
+
   it('sets error and fails the step when the check fails and fail-on-error is true', async () => {
     mockedCheckManifest.mockRejectedValue(new Error('Forbidden (403) for registry.io.'));
 

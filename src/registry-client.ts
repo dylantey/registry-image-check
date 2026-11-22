@@ -11,6 +11,13 @@ export interface CheckResult {
 export interface ClientOptions {
   /** Injectable delay for retries; tests pass a no-op. */
   sleep?: (ms: number) => Promise<void>;
+  /** Per-request timeout in ms; defaults to 10s. */
+  timeoutMs?: number;
+}
+
+interface RequestContext {
+  sleep: (ms: number) => Promise<void>;
+  timeoutMs: number;
 }
 
 interface RequestResult {
@@ -38,17 +45,20 @@ export async function checkManifest(
   auth?: DockerAuth,
   options: ClientOptions = {}
 ): Promise<CheckResult> {
-  const sleep = options.sleep ?? defaultSleep;
+  const ctx: RequestContext = {
+    sleep: options.sleep ?? defaultSleep,
+    timeoutMs: options.timeoutMs ?? REQUEST_TIMEOUT_MS,
+  };
   const apiHost = resolveApiHost(registry);
   const encodedRepository = encodeURIComponent(repository).replace(/%2F/g, '/');
   const path = `/v2/${encodedRepository}/manifests/${encodeURIComponent(reference)}`;
 
-  const result = await requestWithRetry(apiHost, path, 'HEAD', buildHeaders(auth), sleep);
+  const result = await requestWithRetry(apiHost, path, 'HEAD', buildHeaders(auth), ctx);
 
   if (result.statusCode === 401 && result.headers['www-authenticate']) {
     const bearerAuth = parseBearerChallenge(result.headers['www-authenticate'] as string);
     if (bearerAuth) {
-      const token = await fetchBearerToken(bearerAuth, auth, sleep);
+      const token = await fetchBearerToken(bearerAuth, auth, ctx);
       const tokenResult = await requestWithRetry(
         apiHost,
         path,
@@ -57,7 +67,7 @@ export async function checkManifest(
           ...buildHeaders(auth),
           Authorization: `Bearer ${token}`,
         },
-        sleep
+        ctx
       );
       return handleRegistryResponse(tokenResult, registry);
     }
@@ -127,7 +137,7 @@ async function requestWithRetry(
   path: string,
   method: string,
   headers: Record<string, string>,
-  sleep: (ms: number) => Promise<void>,
+  ctx: RequestContext,
   readBody = false
 ): Promise<RequestResult> {
   let lastError: unknown;
@@ -138,11 +148,11 @@ async function requestWithRetry(
 
     let result: RequestResult;
     try {
-      result = await request(hostname, path, method, headers, readBody);
+      result = await request(hostname, path, method, headers, ctx.timeoutMs, readBody);
     } catch (err) {
       lastError = err;
       if (isLastAttempt) throw err;
-      await sleep(backoff);
+      await ctx.sleep(backoff);
       continue;
     }
 
@@ -151,7 +161,7 @@ async function requestWithRetry(
     }
 
     const delay = result.statusCode === 429 ? retryAfterMs(result.headers) ?? backoff : backoff;
-    await sleep(delay);
+    await ctx.sleep(delay);
   }
 
   throw lastError ?? new Error('Request failed');
@@ -174,6 +184,7 @@ function request(
   path: string,
   method: string,
   headers: Record<string, string>,
+  timeoutMs: number,
   readBody = false
 ): Promise<RequestResult> {
   const { isHttps, hostname, port } = parseConnectionOptions(registry);
@@ -204,8 +215,8 @@ function request(
       });
     });
 
-    req.setTimeout(REQUEST_TIMEOUT_MS, () => {
-      req.destroy(new Error(`Request to ${registry} timed out after ${REQUEST_TIMEOUT_MS}ms`));
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error(`Request to ${registry} timed out after ${timeoutMs}ms`));
     });
     req.on('error', reject);
     req.end();
@@ -241,7 +252,7 @@ function parseBearerChallenge(header: string): BearerChallenge | null {
 async function fetchBearerToken(
   challenge: BearerChallenge,
   auth: DockerAuth | undefined,
-  sleep: (ms: number) => Promise<void>
+  ctx: RequestContext
 ): Promise<string> {
   const url = new URL(challenge.realm);
   if (challenge.service) url.searchParams.set('service', challenge.service);
@@ -260,7 +271,7 @@ async function fetchBearerToken(
     `${url.pathname}${url.search}`,
     'GET',
     headers,
-    sleep,
+    ctx,
     true
   );
 

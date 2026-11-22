@@ -25928,8 +25928,17 @@ const credentials_1 = __nccwpck_require__(3029);
 const registry_client_1 = __nccwpck_require__(9122);
 async function run() {
     const image = core.getInput('image', { required: true });
-    const failOnError = core.getBooleanInput('fail-on-error');
-    const failIfMissing = core.getBooleanInput('fail-if-missing');
+    let failOnError;
+    let failIfMissing;
+    try {
+        failOnError = core.getBooleanInput('fail-on-error');
+        failIfMissing = core.getBooleanInput('fail-if-missing');
+    }
+    catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        core.setFailed(`Invalid boolean input: ${message}`);
+        return;
+    }
     try {
         const ref = (0, image_parser_1.parseImageReference)(image);
         core.info(`Checking ${ref.registry}/${ref.repository}...`);
@@ -26025,19 +26034,22 @@ function resolveApiHost(registry) {
     return registry === 'docker.io' ? 'registry-1.docker.io' : registry;
 }
 async function checkManifest(registry, repository, reference, auth, options = {}) {
-    const sleep = options.sleep ?? defaultSleep;
+    const ctx = {
+        sleep: options.sleep ?? defaultSleep,
+        timeoutMs: options.timeoutMs ?? REQUEST_TIMEOUT_MS,
+    };
     const apiHost = resolveApiHost(registry);
     const encodedRepository = encodeURIComponent(repository).replace(/%2F/g, '/');
     const path = `/v2/${encodedRepository}/manifests/${encodeURIComponent(reference)}`;
-    const result = await requestWithRetry(apiHost, path, 'HEAD', buildHeaders(auth), sleep);
+    const result = await requestWithRetry(apiHost, path, 'HEAD', buildHeaders(auth), ctx);
     if (result.statusCode === 401 && result.headers['www-authenticate']) {
         const bearerAuth = parseBearerChallenge(result.headers['www-authenticate']);
         if (bearerAuth) {
-            const token = await fetchBearerToken(bearerAuth, auth, sleep);
+            const token = await fetchBearerToken(bearerAuth, auth, ctx);
             const tokenResult = await requestWithRetry(apiHost, path, 'HEAD', {
                 ...buildHeaders(auth),
                 Authorization: `Bearer ${token}`,
-            }, sleep);
+            }, ctx);
             return handleRegistryResponse(tokenResult, registry);
         }
     }
@@ -26097,27 +26109,27 @@ function retryAfterMs(headers) {
  * timeouts, 5xx and 429. Other statuses are returned to the caller unchanged.
  * The final attempt's result (or error) is returned/thrown as-is.
  */
-async function requestWithRetry(hostname, path, method, headers, sleep, readBody = false) {
+async function requestWithRetry(hostname, path, method, headers, ctx, readBody = false) {
     let lastError;
     for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         const backoff = BASE_BACKOFF_MS * 2 ** (attempt - 1);
         const isLastAttempt = attempt === MAX_ATTEMPTS;
         let result;
         try {
-            result = await request(hostname, path, method, headers, readBody);
+            result = await request(hostname, path, method, headers, ctx.timeoutMs, readBody);
         }
         catch (err) {
             lastError = err;
             if (isLastAttempt)
                 throw err;
-            await sleep(backoff);
+            await ctx.sleep(backoff);
             continue;
         }
         if (!isRetryableStatus(result.statusCode) || isLastAttempt) {
             return result;
         }
         const delay = result.statusCode === 429 ? retryAfterMs(result.headers) ?? backoff : backoff;
-        await sleep(delay);
+        await ctx.sleep(delay);
     }
     throw lastError ?? new Error('Request failed');
 }
@@ -26128,7 +26140,7 @@ function parseConnectionOptions(registry) {
     const port = portMatch ? parseInt(portMatch[1], 10) : undefined;
     return { isHttps, hostname, port };
 }
-function request(registry, path, method, headers, readBody = false) {
+function request(registry, path, method, headers, timeoutMs, readBody = false) {
     const { isHttps, hostname, port } = parseConnectionOptions(registry);
     const client = isHttps ? https : http;
     const options = {
@@ -26153,8 +26165,8 @@ function request(registry, path, method, headers, readBody = false) {
                 resolve({ statusCode: res.statusCode || 0, headers: res.headers, body: data });
             });
         });
-        req.setTimeout(REQUEST_TIMEOUT_MS, () => {
-            req.destroy(new Error(`Request to ${registry} timed out after ${REQUEST_TIMEOUT_MS}ms`));
+        req.setTimeout(timeoutMs, () => {
+            req.destroy(new Error(`Request to ${registry} timed out after ${timeoutMs}ms`));
         });
         req.on('error', reject);
         req.end();
@@ -26180,7 +26192,7 @@ function parseBearerChallenge(header) {
         return null;
     return result;
 }
-async function fetchBearerToken(challenge, auth, sleep) {
+async function fetchBearerToken(challenge, auth, ctx) {
     const url = new url_1.URL(challenge.realm);
     if (challenge.service)
         url.searchParams.set('service', challenge.service);
@@ -26192,7 +26204,7 @@ async function fetchBearerToken(challenge, auth, sleep) {
     if (auth) {
         headers.Authorization = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`;
     }
-    const response = await requestWithRetry(url.origin, `${url.pathname}${url.search}`, 'GET', headers, sleep, true);
+    const response = await requestWithRetry(url.origin, `${url.pathname}${url.search}`, 'GET', headers, ctx, true);
     if (response.statusCode !== 200) {
         throw new Error(`Failed to fetch registry token: status ${response.statusCode}`);
     }
