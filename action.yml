@@ -1,6 +1,9 @@
 name: 'Registry Image Check'
 description: 'Check if a container image exists in a registry without using the Docker daemon.'
-author: 'your-org'
+author: 'dylantey'
+branding:
+  icon: 'check-circle'
+  color: 'blue'
 inputs:
   image:
     description: 'Full image reference, e.g. 123456789012.dkr.ecr.us-east-1.amazonaws.com/my-repo:tag'
