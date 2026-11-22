@@ -8,31 +8,67 @@ export interface CheckResult {
   digest?: string;
 }
 
+export interface ClientOptions {
+  /** Injectable delay for retries; tests pass a no-op. */
+  sleep?: (ms: number) => Promise<void>;
+  /** Per-request timeout in ms; defaults to 10s. */
+  timeoutMs?: number;
+}
+
+interface RequestContext {
+  sleep: (ms: number) => Promise<void>;
+  timeoutMs: number;
+}
+
 interface RequestResult {
   statusCode: number;
   headers: http.IncomingHttpHeaders;
   body?: string;
 }
 
+const MAX_ATTEMPTS = 3;
+const REQUEST_TIMEOUT_MS = 10_000;
+const BASE_BACKOFF_MS = 1_000;
+const MAX_RETRY_AFTER_MS = 30_000;
+
+const defaultSleep = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
+
+/** Docker Hub's API lives on registry-1.docker.io; "docker.io" is only the display name. */
+export function resolveApiHost(registry: string): string {
+  return registry === 'docker.io' ? 'registry-1.docker.io' : registry;
+}
+
 export async function checkManifest(
   registry: string,
   repository: string,
   reference: string,
-  auth?: DockerAuth
+  auth?: DockerAuth,
+  options: ClientOptions = {}
 ): Promise<CheckResult> {
+  const ctx: RequestContext = {
+    sleep: options.sleep ?? defaultSleep,
+    timeoutMs: options.timeoutMs ?? REQUEST_TIMEOUT_MS,
+  };
+  const apiHost = resolveApiHost(registry);
   const encodedRepository = encodeURIComponent(repository).replace(/%2F/g, '/');
   const path = `/v2/${encodedRepository}/manifests/${encodeURIComponent(reference)}`;
 
-  const result = await request(registry, path, 'HEAD', buildHeaders(auth));
+  const result = await requestWithRetry(apiHost, path, 'HEAD', buildHeaders(auth), ctx);
 
   if (result.statusCode === 401 && result.headers['www-authenticate']) {
     const bearerAuth = parseBearerChallenge(result.headers['www-authenticate'] as string);
     if (bearerAuth) {
-      const token = await fetchBearerToken(bearerAuth, auth);
-      const tokenResult = await request(registry, path, 'HEAD', {
-        ...buildHeaders(auth),
-        Authorization: `Bearer ${token}`,
-      });
+      const token = await fetchBearerToken(bearerAuth, auth, ctx);
+      const tokenResult = await requestWithRetry(
+        apiHost,
+        path,
+        'HEAD',
+        {
+          ...buildHeaders(auth),
+          Authorization: `Bearer ${token}`,
+        },
+        ctx
+      );
       return handleRegistryResponse(tokenResult, registry);
     }
   }
@@ -69,9 +105,66 @@ function handleRegistryResponse(result: RequestResult, registry: string): CheckR
     throw new Error(`Unauthorized (401) for ${registry}. Check your credentials.`);
   } else if (result.statusCode === 403) {
     throw new Error(`Forbidden (403) for ${registry}. Check your permissions.`);
+  } else if (result.statusCode === 429) {
+    throw new Error(
+      `Rate limited (429) by ${registry}. Run \`docker login\` or provide registry credentials to raise the limit.`
+    );
   } else {
     throw new Error(`Unexpected status ${result.statusCode} from registry`);
   }
+}
+
+function isRetryableStatus(statusCode: number): boolean {
+  return statusCode === 429 || statusCode >= 500;
+}
+
+/** Retry-After in seconds form only; returns undefined if absent or unparseable. */
+function retryAfterMs(headers: http.IncomingHttpHeaders): number | undefined {
+  const value = headers['retry-after'];
+  if (typeof value !== 'string') return undefined;
+  const seconds = Number(value);
+  if (!Number.isFinite(seconds) || seconds < 0) return undefined;
+  return Math.min(seconds * 1000, MAX_RETRY_AFTER_MS);
+}
+
+/**
+ * Performs a request with up to MAX_ATTEMPTS tries. Retries on network errors,
+ * timeouts, 5xx and 429. Other statuses are returned to the caller unchanged.
+ * The final attempt's result (or error) is returned/thrown as-is.
+ */
+async function requestWithRetry(
+  hostname: string,
+  path: string,
+  method: string,
+  headers: Record<string, string>,
+  ctx: RequestContext,
+  readBody = false
+): Promise<RequestResult> {
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const backoff = BASE_BACKOFF_MS * 2 ** (attempt - 1);
+    const isLastAttempt = attempt === MAX_ATTEMPTS;
+
+    let result: RequestResult;
+    try {
+      result = await request(hostname, path, method, headers, ctx.timeoutMs, readBody);
+    } catch (err) {
+      lastError = err;
+      if (isLastAttempt) throw err;
+      await ctx.sleep(backoff);
+      continue;
+    }
+
+    if (!isRetryableStatus(result.statusCode) || isLastAttempt) {
+      return result;
+    }
+
+    const delay = result.statusCode === 429 ? retryAfterMs(result.headers) ?? backoff : backoff;
+    await ctx.sleep(delay);
+  }
+
+  throw lastError ?? new Error('Request failed');
 }
 
 function parseConnectionOptions(registry: string): {
@@ -91,6 +184,7 @@ function request(
   path: string,
   method: string,
   headers: Record<string, string>,
+  timeoutMs: number,
   readBody = false
 ): Promise<RequestResult> {
   const { isHttps, hostname, port } = parseConnectionOptions(registry);
@@ -121,6 +215,9 @@ function request(
       });
     });
 
+    req.setTimeout(timeoutMs, () => {
+      req.destroy(new Error(`Request to ${registry} timed out after ${timeoutMs}ms`));
+    });
     req.on('error', reject);
     req.end();
   });
@@ -152,7 +249,11 @@ function parseBearerChallenge(header: string): BearerChallenge | null {
   return result;
 }
 
-async function fetchBearerToken(challenge: BearerChallenge, auth?: DockerAuth): Promise<string> {
+async function fetchBearerToken(
+  challenge: BearerChallenge,
+  auth: DockerAuth | undefined,
+  ctx: RequestContext
+): Promise<string> {
   const url = new URL(challenge.realm);
   if (challenge.service) url.searchParams.set('service', challenge.service);
   if (challenge.scope) url.searchParams.set('scope', challenge.scope);
@@ -165,7 +266,14 @@ async function fetchBearerToken(challenge: BearerChallenge, auth?: DockerAuth): 
     headers.Authorization = `Basic ${Buffer.from(`${auth.username}:${auth.password}`).toString('base64')}`;
   }
 
-  const response = await request(url.origin, `${url.pathname}${url.search}`, 'GET', headers, true);
+  const response = await requestWithRetry(
+    url.origin,
+    `${url.pathname}${url.search}`,
+    'GET',
+    headers,
+    ctx,
+    true
+  );
 
   if (response.statusCode !== 200) {
     throw new Error(`Failed to fetch registry token: status ${response.statusCode}`);

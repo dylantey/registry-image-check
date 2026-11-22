@@ -4,9 +4,20 @@ import { getCredentials } from './credentials';
 import { checkManifest } from './registry-client';
 
 export async function run(): Promise<void> {
-  const image = core.getInput('image', { required: true });
-  const failOnError = core.getBooleanInput('fail-on-error');
-  const failIfMissing = core.getBooleanInput('fail-if-missing');
+  // Input errors are configuration bugs, so they always fail the step,
+  // regardless of fail-on-unknown.
+  let image: string;
+  let failOnUnknown: boolean;
+  let failOnMissing: boolean;
+  try {
+    image = core.getInput('image', { required: true });
+    failOnUnknown = core.getBooleanInput('fail-on-unknown');
+    failOnMissing = core.getBooleanInput('fail-on-missing');
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    core.setFailed(`Invalid input: ${message}`);
+    return;
+  }
 
   try {
     const ref = parseImageReference(image);
@@ -31,19 +42,22 @@ export async function run(): Promise<void> {
       core.info(`Digest: ${result.digest}`);
     }
 
-    if (!result.exists && failIfMissing) {
+    if (!result.exists && failOnMissing) {
       core.setFailed(`Image not found: ${image}`);
     }
   } catch (error) {
-    if (failOnError) {
-      core.setFailed(error instanceof Error ? error.message : String(error));
+    const message = error instanceof Error ? error.message : String(error);
+    core.setOutput('error', message);
+    if (failOnUnknown) {
+      core.setFailed(message);
     } else {
-      core.setOutput('exists', 'false');
-      core.warning(error instanceof Error ? error.message : String(error));
+      // Empty means "unknown": a registry error must not look like a missing image.
+      core.setOutput('exists', '');
+      core.warning(message);
     }
   }
 }
 
 if (!process.env.VITEST) {
-  run();
+  run().catch((error) => core.setFailed(error instanceof Error ? error.message : String(error)));
 }

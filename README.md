@@ -71,20 +71,44 @@ Log in to your registry first, then use this action.
     image: us-docker.pkg.dev/my-project/my-repo/my-image:${{ github.sha }}
 ```
 
+### Build only when the image is missing
+
+Set `fail-on-missing: false` so a missing image doesn't fail the step, then gate the build on `exists`:
+
+```yaml
+- uses: dylantey/registry-image-check@v1
+  id: check
+  with:
+    image: ghcr.io/my-org/my-app:${{ github.sha }}
+    fail-on-missing: false
+
+# Compare with 'false' rather than '!= true': if the check itself failed,
+# exists is empty and the build should not run.
+- name: Build and push
+  if: steps.check.outputs.exists == 'false'
+  # Assumes a prior step has logged in to ghcr.io (e.g. docker/login-action)
+  run: |
+    docker build -t ghcr.io/my-org/my-app:${{ github.sha }} .
+    docker push ghcr.io/my-org/my-app:${{ github.sha }}
+```
+
 ## Inputs
 
 | Name              | Required | Default | Description                                                |
 | ----------------- | -------- | ------- | ---------------------------------------------------------- |
 | `image`           | yes      |         | Full image reference, including registry and tag or digest |
-| `fail-on-error`   | no       | `true`  | Fail the step on registry errors other than 404            |
-| `fail-if-missing` | no       | `true`  | Fail the step if the image does not exist (404)            |
+| `fail-on-unknown` | no       | `true`  | Fail the step if the check cannot complete (registry, auth, network or parse error) |
+| `fail-on-missing` | no       | `true`  | Fail the step if the image does not exist (404)            |
 
 ## Outputs
 
-| Name     | Description                                |
-| -------- | ------------------------------------------ |
-| `exists` | `true` if the image exists, `false` if not |
-| `digest` | Manifest digest, if the image exists       |
+| Name     | Description                                                                                                  |
+| -------- | ------------------------------------------------------------------------------------------------------------ |
+| `exists` | `true` if the image exists, `false` if the registry reports it missing, empty if the check failed (see below) |
+| `digest` | Manifest digest, if the image exists                                                                         |
+| `error`  | Error message if the check failed                                                                            |
+
+When `fail-on-unknown` is `false`, a failed check leaves `exists` empty rather than `false`, so a registry outage or rate limit is never mistaken for a missing image. Check `exists` for `'true'`/`'false'` before building.
 
 ## How it works
 
@@ -92,6 +116,11 @@ Log in to your registry first, then use this action.
 2. Supports direct `auths` entries and `credHelpers` / `credsStore`.
 3. Sends a `HEAD` request to `/v2/<repository>/manifests/<tag-or-digest>`.
 4. Returns `exists=true` on HTTP 200 and `exists=false` on HTTP 404.
+5. Retries up to 3 attempts on network errors, timeouts (10s), 5xx and 429, with backoff. A 429 `Retry-After` is honored up to 30s.
+
+Unqualified image names such as `ubuntu:22.04` default to Docker Hub (`docker.io/library/ubuntu:22.04`), using `registry-1.docker.io` for API requests.
+
+Anonymous pulls from Docker Hub are rate limited. If you see a 429 error, run `docker login` before the check, or pass registry credentials.
 
 ## Development
 
